@@ -1,0 +1,122 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+
+/**
+ * Preflop Quiz with Poker Table & Stacks (BB表示)
+ * - 全員のスタックをBBで可視化
+ * - 選択肢は全て「○○bb」表記
+ */
+
+const POSITIONS6 = ["UTG", "MP", "CO", "BTN", "SB", "BB"];
+
+// ヘルパー関数
+function polarToXY(r, deg) {
+  const rad = (deg * Math.PI) / 180;
+  return { left: `${50 + r * Math.cos(rad)}%`, top: `${50 + r * Math.sin(rad)}%` };
+}
+
+function sixMaxLayout() {
+  const angles = { UTG: -90, MP: -30, CO: 30, BTN: 90, SB: 150, BB: -150 };
+  const r = 40;
+  const coords = {};
+  for (const p of POSITIONS6) coords[p] = polarToXY(r, angles[p]);
+  return coords;
+}
+
+function badgeStyleFor(action) {
+  if (!action) return { background: "#e5e7eb", color: "#111" };
+  const a = action.toLowerCase();
+  if (a.startsWith("open")) return { background: "#dbeafe", color: "#1e40af" };
+  if (a.startsWith("call")) return { background: "#fef3c7", color: "#92400e" };
+  if (a.startsWith("3bet") || a.startsWith("4bet")) return { background: "#ffe4e6", color: "#9f1239" };
+  if (a.startsWith("jam") || a.includes("all-in")) return { background: "#dcfce7", color: "#065f46" };
+  if (a.startsWith("fold")) return { background: "#f3f4f6", color: "#6b7280" };
+  return { background: "#e5e7eb", color: "#111" };
+}
+
+function normalizeOptionToBB(opt) {
+  if (!opt) return opt;
+  const txt = opt.toLowerCase();
+  if (txt.includes("x")) return opt.replace(/x/i, "bb");
+  if (txt.startsWith("call")) return opt.match(/[0-9]/) ? opt : opt + " 2.2bb";
+  if (txt.startsWith("fold")) return "Fold 0bb";
+  if (txt.startsWith("limp")) return "Limp 1bb";
+  if (txt.startsWith("jam")) return opt.match(/bb/) ? opt : opt + " all-in";
+  return opt;
+}
+
+function PokerTable({ stacks, heroPos, heroHand, action }) {
+  const coords = useMemo(() => sixMaxLayout(), []);
+  return (
+    <div style={styles.tableWrap}>
+      <div style={styles.tableCircle}>
+        {POSITIONS6.map((pos) => {
+          const c = coords[pos];
+          const isHero = pos === heroPos;
+          const badge = badgeStyleFor(isHero ? action : null);
+          return (
+            <div key={pos} style={{ ...styles.seat, ...c, ...(isHero ? styles.seatHero : {}) }}>
+              <div style={styles.seatPos}>{pos}</div>
+              <div style={styles.seatStack}>[{stacks[pos]}bb]</div>
+              {isHero && <div style={styles.seatHand}>{heroHand}</div>}
+              {isHero && action && (
+                <div style={{ ...styles.badge, background: badge.background, color: badge.color }}>{action}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const QUESTION_BANK = [
+  {
+    id: "btn-open-40bb-AJo",
+    hero: { hand: "AJo", pos: "BTN", eff: 40 },
+    stacks: { UTG: 40, MP: 40, CO: 40, BTN: 40, SB: 40, BB: 40 },
+    options: ["Fold", "Open 2.2x", "Open 3x", "Limp"],
+    answer: 1,
+    note: "AJoは標準的な2.2bbオープン。",
+  },
+];
+
+export default function PreflopQuiz() {
+  const [step, setStep] = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [locked, setLocked] = useState(false);
+
+  const q = QUESTION_BANK[step];
+  const normalizedOptions = q.options.map((o) => normalizeOptionToBB(o));
+
+  const stacks = q.stacks || Object.fromEntries(POSITIONS6.map((p) => [p, q.hero.eff]));
+
+  return (
+    <div style={styles.wrap}>
+      <h1 style={styles.h1}>Preflop Quiz</h1>
+      <PokerTable stacks={stacks} heroPos={q.hero.pos} heroHand={q.hero.hand} action={selected != null ? normalizedOptions[selected] : null} />
+
+      <div>
+        {normalizedOptions.map((opt, i) => (
+          <label key={i} style={styles.choice}>
+            <input type="radio" name="opt" value={i} checked={selected === i} onChange={() => setSelected(i)} disabled={locked} />
+            {opt}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const styles = {
+  wrap: { maxWidth: 800, margin: "0 auto", padding: 16 },
+  h1: { fontSize: 24, fontWeight: 800, marginBottom: 16 },
+  choice: { display: "block", padding: 8, border: "1px solid #ddd", marginBottom: 6, borderRadius: 6 },
+  tableWrap: { position: "relative", height: 280, marginBottom: 12 },
+  tableCircle: { position: "absolute", inset: 0, margin: "auto", width: "100%", height: "100%", maxWidth: 720, borderRadius: "50%", background: "radial-gradient(circle at 50% 50%, #065f46 0%, #064e3b 60%, #052e2b 100%)" },
+  seat: { position: "absolute", transform: "translate(-50%, -50%)", minWidth: 90, textAlign: "center", padding: 6, borderRadius: 12, background: "rgba(255,255,255,.84)", border: "1px solid #e5e7eb" },
+  seatHero: { border: "2px solid #111", boxShadow: "0 4px 10px rgba(0,0,0,.18)" },
+  seatPos: { fontSize: 12, fontWeight: 700 },
+  seatStack: { fontSize: 12, opacity: 0.8 },
+  seatHand: { fontFamily: "monospace", fontWeight: 800, marginTop: 2 },
+  badge: { marginTop: 4, padding: "4px 8px", borderRadius: 999, fontSize: 12, fontWeight: 700 },
+};
