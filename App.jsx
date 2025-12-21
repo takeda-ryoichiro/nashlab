@@ -11,6 +11,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 /* ================= 基本 ================= */
 const POSITIONS6 = ["UTG", "MP", "CO", "BTN", "SB", "BB"];
+const POSITIONS9 = ["UTG", "+1", "+2", "LJ", "MP", "CO", "BTN", "SB", "BB"];
 const BLIND_SIZES = { SB: 0.5, BB: 1 };
 
 const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
@@ -24,8 +25,10 @@ function calcBasePotBB() {
   return BLIND_SIZES.SB + BLIND_SIZES.BB; // 0.5 + 1 = 1.5
 }
 
-function calcExtraPotByPatternId(patternId) {
+function calcExtraPotByPatternId(patternId, facing) {
   const id = String(patternId || "");
+  const facingSize = String(facing || "");
+  console.log(facingSize);
   const lower = id.toLowerCase();
 
   let extra = 0;
@@ -40,11 +43,18 @@ function calcExtraPotByPatternId(patternId) {
     extra += 1.0;
   }
 
+  // facing openスタックを追加する
+  if(facingSize.split(" ")[1] && facingSize.split(" ")[1].includes("open")){
+    // facing: "UTG open 2.3x",
+    let size = Number(facingSize.split(" ")[2].replace("x",""));
+    extra += size;
+  }
+
   return extra;
 }
 
-function calcTotalPotBB(patternId) {
-  return calcBasePotBB() + calcExtraPotByPatternId(patternId);
+function calcTotalPotBB(patternId, facing) {
+  return calcBasePotBB() + calcExtraPotByPatternId(patternId, facing);
 }
 
 /**
@@ -190,11 +200,21 @@ function getRangeMap(rangeStr) {
 
 /** optionsの先頭単語で action を探す（open/call/3bet/jam/fold など） */
 function findIndexByAction(options, action) {
-  const a = (action || "").toLowerCase();
-  if (!a) return 0;
-  const idx = (options || []).findIndex((o) => (o || "").toLowerCase().startsWith(a));
+  const target = actionKeyFromBand(action);
+  if (!target) return 0;
+
+  const opts = (options || []).map(o => actionKeyFromOption(o));
+
+  // まずは完全一致（"3bet 10bb" などを正確に拾う）
+  let idx = opts.findIndex(k => k === target);
+  if (idx !== -1) return idx;
+
+  // 次に「先頭単語一致」をフォールバック（"open" と "open 2.2bb" の互換用）
+  const head = target.split(/\s+/)[0];
+  idx = opts.findIndex(k => k.split(/\s+/)[0] === head);
   return idx !== -1 ? idx : 0;
 }
+
 
 /* ========= 全169ハンド生成 ========= */
 function allHands169() {
@@ -238,64 +258,87 @@ function answerByRangeSpec(options, hand, bands, fallbackAction = "fold", defaul
 function probsByRangeSpec(options, hand, bands, fallbackAction = "fold") {
   const h = (hand || "").toUpperCase();
 
-  // actionキーを options から厳密に定義
-  const actions = (options || []).map(
-    o => String(o).trim().split(/\s+/)[0].toLowerCase()
-  );
+  // options を「全文キー」で定義（"3bet 6bb" と "3bet 10bb" を分ける）
+  const optionKeys = (options || []).map(actionKeyFromOption);
 
-  const weights = Object.fromEntries(actions.map(a => [a, 0]));
+  const weights = Object.fromEntries(optionKeys.map(k => [k, 0]));
 
-  // band weight を加算
   for (const b of bands || []) {
-    const action = String(b.action || "").toLowerCase();
-    if (!(action in weights)) continue;
-
+    const bandKey = actionKeyFromBand(b.action);
     const rmap = getRangeMap(b.range);
-    console.log(rmap)
     const w = Number(rmap.get(h) ?? 0);
-    if (w > 0) weights[action] += w;
+    if (w <= 0) continue;
+
+    // 1) 完全一致加算
+    if (bandKey in weights) {
+      weights[bandKey] += w;
+      continue;
+    }
+
+    // 2) サイズ無し action 用に、先頭単語一致に加算（例: "open" -> "open 2.2bb"）
+    const bandHead = bandKey.split(/\s+/)[0];
+    for (const ok of optionKeys) {
+      if (ok.split(/\s+/)[0] === bandHead) {
+        weights[ok] += w;
+      }
+    }
   }
 
-  // fold は「残り」を担当
-  if ("fold" in weights) {
+  // fold の「残り」：options の中に fold がある場合だけ残りを入れる
+  const foldKey = optionKeys.find(k => k.split(/\s+/)[0] === "fold");
+  if (foldKey) {
     const nonFoldSum = Object.entries(weights)
-      .filter(([k]) => k !== "fold")
+      .filter(([k]) => k !== foldKey)
       .reduce((a, [, v]) => a + v, 0);
-
-    console.log(nonFoldSum);
-    //  バグの要因候補（候補が複数あるとfoldに発散する可能性がある。
-    weights.fold = Math.max(0, 1 - nonFoldSum);
-
+    weights[foldKey] = Math.max(0, 1 - nonFoldSum);
   }
 
-  // 念のため正規化（合計>1対策）
+  // 正規化
   const sum = Object.values(weights).reduce((a, v) => a + v, 0);
   if (sum > 0) {
     for (const k in weights) weights[k] /= sum;
   }
-
   return weights;
 }
 
 
+// 文字列一致用：大小/余計な空白/表記ゆれ(x→bb)を潰したキー
+function actionKeyFromOption(opt) {
+  return String(opt || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/x\b/g, "bb"); // "2x" -> "2bb"
+}
+
+// band.action 用（"JAM" みたいなのも吸収）
+function actionKeyFromBand(action) {
+  return String(action || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 
 function answerByMaxProb(options, probs, fallbackAction="fold") {
-  let bestKey = fallbackAction;
+  let bestKey = actionKeyFromOption(fallbackAction);
   let best = 0;
 
   for (const opt of options || []) {
-    const key = opt.split(/\s+/)[0].toLowerCase();
+    const key = actionKeyFromOption(opt);
     const p = Number(probs?.[key] ?? 0);
-    if (p > best) {
-      best = p;
-      bestKey = key;
-    }
+    if (p > best) { best = p; bestKey = key; }
   }
 
-  // 最大確率が極小なら fold
-  if (best < 0.1) bestKey = fallbackAction;
+  // 最大確率が極小なら fold（fold option がある前提で index を返す）
+  if (best < 0.1) {
+    const foldIdx = (options || []).findIndex(o => actionKeyFromOption(o).startsWith("fold"));
+    return foldIdx !== -1 ? foldIdx : 0;
+  }
 
-  return findIndexByAction(options, bestKey);
+  // bestKey を options の index に戻す
+  const idx = (options || []).findIndex(o => actionKeyFromOption(o) === bestKey);
+  return idx !== -1 ? idx : 0;
 }
 
 /* ================= テーブル可視化 ================= */
@@ -354,7 +397,7 @@ function parseFacingOpen(facing) {
 function PokerTable({ stacks, heroPos, heroHand, action, facing, patternId }) {
   const coords = useMemo(() => sixMaxLayout(), []);
   const facingOpen = useMemo(() => parseFacingOpen(facing), [facing]);
-  const potBB = useMemo(() => calcTotalPotBB(patternId), [patternId]);
+  const potBB = useMemo(() => calcTotalPotBB(patternId, facing), [patternId, facing]);
 
   return (
     <div style={styles.tableWrap}>
@@ -424,7 +467,7 @@ function ProbBarChart({ options, probs }) {
   // options: ["Fold", "Open 2.2bb"] など
   // probs: { fold:0.2, open:0.8 } など（actionキーは小文字）
   const rows = (options || []).map((opt) => {
-    const key = String(opt || "").trim().split(/\s+/)[0]?.toLowerCase();
+    const key = actionKeyFromOption(opt);
     const p = Math.max(0, Math.min(1, Number(probs?.[key] ?? 0)));
     return { opt, key, p };
   });
@@ -597,6 +640,92 @@ const PATTERNS = [
           { action: "3bet 10bb", min: 0.05, range: `KK:0.415, QQ:0.999, JJ:0.926, TT:0.821, 99:0.984, 88:0.911, 77:0.938, 66:0.647, 55:0.781, 44:0.164, 33:0.051, AKs:0.359, AQs:0.991, AJs:0.846, ATs:0.998, A9s:0.940, A8s:0.810, A7s:0.369, A6s:0.211, A5s:0.554, A4s:0.004, A3s:0.016, A2s:0.429, AKo:0.207, AQo:0.402, AJo:0.897, ATo:0.276, KQs:0.992, KJs:0.969, KTs:0.996, K9s:0.742, K8s:0.257, K7s:0.026, K6s:0.042, KQo:0.737, KJo:0.028, QJs:0.850, QTs:0.979, JTs:0.870, J9s:0.001, J8s:0.002, T9s:0.887, T8s:0.001, T7s:0.033, 98s:0.005, 87s:0.161, 86s:0.001, 85s:0.002, 76s:0.414, 65s:0.810, 54s:0.137` },
           { action: "3bet 6bb", min: 0.05, range: `AA:0.181, KK:0.284, JJ:0.074, TT:0.178, 99:0.015, 88:0.080, 77:0.049, 66:0.076, 55:0.037, 44:0.053, AKs:0.336, AQs:0.006, AJs:0.154, ATs:0.001, A9s:0.036, A8s:0.003, A7s:0.008, A6s:0.157, A5s:0.394, A4s:0.282, A3s:0.028, A2s:0.121, AKo:0.337, AQo:0.057, AJo:0.022, ATo:0.196, A4o:0.001, A3o:0.001, KQs:0.004, KJs:0.011, KTs:0.002, K9s:0.032, K8s:0.261, K7s:0.175, K6s:0.016, K5s:0.049, K4s:0.308, K3s:0.019, K2s:0.003, KQo:0.083, KJo:0.063, KTo:0.036, K7o:0.001, QJs:0.129, QTs:0.004, Q9s:0.065, Q8s:0.105, JTs:0.003, J9s:0.022, T7s:0.001, 98s:0.001, 87s:0.007, 76s:0.002, 75s:0.022, 65s:0.087, 54s:0.113, 53s:0.001` },
           { action: "call", min: 0.05, range: `KK:0.415, QQ:0.999, JJ:0.926, TT:0.821, 99:0.984, 88:0.911, 77:0.938, 66:0.647, 55:0.781, 44:0.164, 33:0.051, AKs:0.359, AQs:0.991, AJs:0.846, ATs:0.998, A9s:0.940, A8s:0.810, A7s:0.369, A6s:0.211, A5s:0.554, A4s:0.004, A3s:0.016, A2s:0.429, AKo:0.207, AQo:0.402, AJo:0.897, ATo:0.276, KQs:0.992, KJs:0.969, KTs:0.996, K9s:0.742, K8s:0.257, K7s:0.026, K6s:0.042, KQo:0.737, KJo:0.028, QJs:0.850, QTs:0.979, JTs:0.870, J9s:0.001, J8s:0.002, T9s:0.887, T8s:0.001, T7s:0.033, 98s:0.005, 87s:0.161, 86s:0.001, 85s:0.002, 76s:0.414, 65s:0.810, 54s:0.137` },
+    ],
+    answerBuilder: (pattern, hand, _weight, optionsBB) =>
+      ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
+  },
+  {
+    id: "50bb eff UTG open chase",
+    label: "UTG 50bb eff Open（クラブマッチ）",
+    questionBuilder: (hand) => ({
+      hand,
+      pos: "UTG",
+      eff: 50,
+      facing: "Unopened",
+      stacks: { UTG: 50, MP: 50, CO: 50, BTN: 50, SB: 50, BB: 50 },
+      options: ["Fold","open 2.3bb"],
+    }),
+    bands: [
+          { action: "open", min: 0.05, range: `99+, 88:0.997, 77:0.999, 66:0.999, 55:0.729, A9s+, A8s:0.999, A7s, A6s:0.999, A5s:0.999, A4s:0.999, A3s, A2s:0.997, ATo+, A9o:0.996, A8o:0.451, A7o:0.055, A5o:0.946, A4o:0.073, A3o:0.002, KJs+, KTs:0.999, K9s:0.995, K8s:0.978, K7s:0.995, K6s:0.970, K5s:0.904, K4s:0.350, K3s:0.011, KJo+, KTo:0.583, K5o:0.001, QJs, QTs:0.999, Q9s:0.964, Q8s:0.085, Q7s:0.012, QJo:0.483, QTo:0.003, JTs:0.997, J9s:0.714, T9s:0.959, T8s:0.710, 98s:0.013, 76s:0.005` },
+    ],
+    answerBuilder: (pattern, hand, _weight, optionsBB) =>
+      ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
+  },
+  {
+    id: "50bb eff HJ open chase",
+    label: "HJ 50bb eff Open（クラブマッチ）",
+    questionBuilder: (hand) => ({
+      hand,
+      pos: "HJ",
+      eff: 50,
+      facing: "Unopened",
+      stacks: { UTG: 50, MP: 50, CO: 50, BTN: 50, SB: 50, BB: 50 },
+      options: ["Fold","open 2.3bb"],
+    }),
+    bands: [
+          { action: "open", min: 0.05, range: `99+, 88:0.999, 77, 66:0.997, 55:0.997, 44:0.618, 33:0.001, A8s+, A7s:0.999, A6s-A2s, A8o+, A7o:0.931, A6o:0.023, A5o:0.998, A4o:0.253, A3o:0.003, A2o:0.001, KQs, KJs:0.999, KTs, K9s:0.991, K8s, K7s:0.997, K6s:0.998, K5s:0.992, K4s:0.911, K3s:0.361, K2s:0.001, KJo+, KTo:0.999, K9o:0.001, QJs, QTs:0.999, Q9s:0.992, Q8s:0.923, Q7s:0.006, Q6s:0.294, QJo:0.998, QTo:0.537, JTs:0.998, J9s:0.984, J8s:0.867, JTo:0.466, T9s:0.986, T8s:0.934, T7s:0.581, 98s:0.808, 97s:0.158, 87s:0.078, 86s:0.006, 76s:0.385, 65s:0.693` },
+    ],
+    answerBuilder: (pattern, hand, _weight, optionsBB) =>
+      ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
+  },
+  {
+    id: "50bb eff CO open chase",
+    label: "CO 50bb eff Open（クラブマッチ）",
+    questionBuilder: (hand) => ({
+      hand,
+      pos: "CO",
+      eff: 50,
+      facing: "Unopened",
+      stacks: { UTG: 50, MP: 50, CO: 50, BTN: 50, SB: 50, BB: 50 },
+      options: ["Fold","open 2.3bb"],
+    }),
+    bands: [
+          { action: "open", min: 0.05, range: `66+, 55:0.999, 44:0.998, 33:0.415, 22:0.007, A2s+, A7o+, A6o:0.997, A5o, A4o:0.994, A3o:0.320, A2o:0.009, KTs+, K9s:0.999, K8s:0.999, K7s:0.996, K6s:0.999, K5s:0.996, K4s:0.996, K3s, K2s:0.989, KTo+, K9o:0.998, K8o:0.006, K7o:0.003, K6o:0.001, K4o:0.001, QJs:0.999, QTs, Q9s:0.994, Q8s, Q7s:0.951, Q6s:0.613, Q5s:0.966, Q4s:0.287, Q3s:0.001, QJo, QTo:0.998, Q9o:0.030, JTs, J9s:0.994, J8s:0.998, J7s:0.971, J6s:0.006, J5s:0.154, J4s:0.035, J2s:0.001, JTo:0.999, J9o:0.001, T9s:0.998, T8s:0.996, T7s:0.911, T6s:0.009, T9o:0.531, 98s:0.988, 97s:0.975, 96s:0.215, 87s:0.919, 86s:0.910, 76s:0.966, 75s:0.210, 65s:0.864, 54s:0.168` },
+    ],
+    answerBuilder: (pattern, hand, _weight, optionsBB) =>
+      ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
+  },
+  {
+    id: "50bb eff BTN open chase",
+    label: "BTN 50bb eff Open（クラブマッチ）",
+    questionBuilder: (hand) => ({
+      hand,
+      pos: "BTN",
+      eff: 50,
+      facing: "Unopened",
+      stacks: { UTG: 50, MP: 50, CO: 50, BTN: 50, SB: 50, BB: 50 },
+      options: ["Fold","open 2.3bb"],
+    }),
+    bands: [
+          { action: "open", min: 0.05, range: `55+, 44:0.999, 33-22, A2s+, A2o+, KTs+, K9s:0.999, K8s-K6s, K5s:0.997, K4s-K2s, K6o+, K5o:0.995, K4o:0.096, K3o:0.001, K2o:0.002, Q8s+, Q7s:0.999, Q6s:0.992, Q5s:0.998, Q4s:0.996, Q3s:0.998, Q2s:0.968, Q9o+, Q8o:0.986, Q7o:0.559, Q6o:0.004, JTs, J9s:0.998, J8s:0.998, J7s:0.998, J6s:0.994, J5s:0.996, J4s:0.950, J3s:0.520, J2s:0.290, J9o+, J8o:0.990, T7s+, T6s:0.999, T5s:0.927, T4s:0.848, T3s:0.386, T9o, T8o:0.991, T7o:0.440, 98s, 97s:0.999, 96s:0.992, 95s:0.742, 94s:0.025, 98o:0.972, 97o:0.004, 87s:0.997, 86s:0.991, 85s:0.996, 87o:0.428, 76s:0.999, 75s:0.991, 74s:0.618, 76o:0.203, 65s:0.999, 64s:0.862, 63s:0.001, 65o:0.004, 54s:0.998, 53s:0.978, 52s:0.001, 43s:0.003` },
+    ],
+    answerBuilder: (pattern, hand, _weight, optionsBB) =>
+      ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
+  },
+  {
+    id: "50bb eff BBvsUTG chase",
+    label: "BB 50bb eff BBvsUTG（クラブマッチ）",
+    questionBuilder: (hand) => ({
+      hand,
+      pos: "BB",
+      eff: 50,
+      facing: "UTG open 2.3x",
+      stacks: { UTG: 50, MP: 50, CO: 50, BTN: 50, SB: 50, BB: 50 },
+      options: ["Fold","call", "3bet 8.5bb"],
+    }),
+    bands: [
+          { action: "3bet 8.5bb", min: 0.05, range: `AA, KK:0.664, AKs:0.818, AQs:0.012, A9s:0.038, A7s:0.163, A6s:0.261, A5s:0.118, A4s:0.691, A3s:0.815, A2s:0.412, AKo:0.542, AQo:0.017, ATo:0.038, A9o:0.010, A8o:0.061, A7o:0.533, A6o:0.151, A5o:0.349, A4o:0.523, A3o:0.534, A2o:0.057, KTs:0.003, K7s:0.096, K6s:0.004, K5s:0.423, K4s:0.044, K3s:0.001, K2s:0.100, KJo:0.047, KTo:0.033, K9o:0.103, K8o:0.046, K7o:0.010, K6o:0.039, K5o:0.038, K4o:0.023, K3o:0.018, K2o:0.002, QJs:0.009, QTs:0.001, Q9s:0.015, Q8s:0.039, Q5s:0.004, Q4s:0.001, Q2s:0.095, QJo:0.029, QTo:0.066, Q9o:0.067, Q8o:0.051, JTs:0.005, J9s:0.001, J7s:0.141, J5s:0.155, J3s:0.040, J2s:0.007, T7s:0.001, T6s:0.006, T3s:0.005, T9o:0.001, T8o:0.013, 98s:0.030, 97s:0.055, 95s:0.038, 93s:0.003, 92s:0.001, 98o:0.015, 87s:0.080, 83s:0.001, 87o:0.042, 76s:0.008, 76o:0.027, 75o:0.025, 62s:0.043, 54s:0.055, 52s:0.003, 43s:0.025` },
+          { action: "call", min: 0.05, range: `KK:0.336, QQ-22, AKs:0.182, AQs:0.988, AJs-ATs, A9s:0.962, A8s, A7s:0.837, A6s:0.738, A5s:0.881, A4s:0.308, A3s:0.184, A2s:0.585, AKo:0.458, AQo:0.983, AJo, ATo:0.962, A9o:0.989, A8o:0.933, A7o:0.418, A6o:0.342, A5o:0.605, A4o:0.452, A3o:0.025, KJs+, KTs:0.997, K9s:0.992, K8s, K7s:0.904, K6s:0.995, K5s:0.576, K4s:0.939, K3s:0.991, K2s:0.886, KQo, KJo:0.953, KTo:0.967, K9o:0.722, K8o:0.281, K7o:0.177, QJs:0.991, QTs:0.999, Q9s:0.984, Q8s:0.960, Q7s:0.999, Q6s:0.999, Q5s:0.990, Q4s:0.991, Q3s:0.999, Q2s:0.898, QJo:0.971, QTo:0.928, Q9o:0.616, Q8o:0.150, JTs:0.994, J9s:0.999, J8s:0.997, J7s:0.857, J6s:0.991, J5s:0.449, J4s:0.725, J3s:0.418, J2s:0.075, JTo:0.994, J9o:0.600, J8o:0.003, T9s:0.999, T8s:0.995, T7s:0.999, T6s:0.986, T5s:0.989, T4s:0.298, T3s:0.078, T2s:0.001, T9o:0.988, T8o:0.707, 98s:0.966, 97s:0.944, 96s:0.998, 95s:0.284, 94s:0.332, 93s:0.136, 92s:0.171, 98o:0.798, 87s:0.918, 86s:0.993, 85s:0.998, 84s:0.977, 83s:0.002, 87o:0.618, 86o:0.001, 76s:0.992, 75s, 74s:0.988, 73s:0.461, 72s:0.006, 76o:0.967, 75o:0.257, 65s, 64s:0.999, 63s:0.974, 62s:0.683, 65o:0.978, 64o:0.141, 54s:0.945, 53s:0.997, 52s:0.982, 54o:0.517, 43s:0.971, 42s:0.994, 32s:0.734` },
     ],
     answerBuilder: (pattern, hand, _weight, optionsBB) =>
       ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
