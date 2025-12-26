@@ -1,7 +1,7 @@
 
 
 /* ================= PATTERNS（回答は range 文字列で定義） ================= */
-const PATTERNS = [
+export const PATTERNS = [
   {
     id: "btn-open ante",
     label: "BTN Open（Unopened）",
@@ -241,5 +241,3 @@ const PATTERNS = [
       ({ index: answerByRangeSpec(optionsBB, hand, pattern.bands, "fold", 0.5) })
   },
 ];
-
-export default PATTERNS;

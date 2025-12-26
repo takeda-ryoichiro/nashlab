@@ -1,35 +1,38 @@
-// import React from "react";
-// import ReactDOM from "react-dom/client";
-// import PreflopQuizApp from "./App.jsx";
-// import "./index.css";
+var _jsxFileName = "C:/Users/taked/NashLab/src/main.jsx";
+import { jsxDEV as _jsxDEV } from "react/jsx-dev-runtime";
 
-// var _jsxFileName = "C:/Users/taked/NashLab/src/main.jsx";
-// import { jsxDEV as _jsxDEV } from "react/jsx-dev-runtime";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import PreflopQuizApp from "./App.jsx";
+import Home from "./home.jsx";
+import "./index.css";
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/quiz" element={<PreflopQuizApp />} />
+      </Routes>
+    </BrowserRouter>
+  </React.StrictMode>
+);
+
 
 
 // ReactDOM.createRoot(document.getElementById("root")).render(
 //   <React.StrictMode>
-//     <PreflopQuizApp />
+//     <Home />
 //   </React.StrictMode>
 // );
 
-import React from "react";
-import ReactDOM from "react-dom/client";
-import PreflopQuizApp from "./App.jsx";
-import Home from "./home.jsx";
+// import React from "react";
+// import ReactDOM from "react-dom/client";
+// import PreflopQuizApp from "./App.jsx";
+// import Home from "./home.jsx";
 
-import "./index.css";
+// import "./index.css";
 
-var _jsxFileName = "C:/Users/taked/NashLab/src/main.jsx";
-import { jsxDEV as _jsxDEV } from "react/jsx-dev-runtime";
-
-
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <Routes>
-      <Route path="/" element={<Home />}></Route>
-      <Route path="quiz" element={<PreflopQuizApp />}></Route>      
-    </Routes>
-  </React.StrictMode>
-
-);
+// var _jsxFileName = "C:/Users/taked/NashLab/src/main.jsx";
+// import { jsxDEV as _jsxDEV } from "react/jsx-dev-runtime";

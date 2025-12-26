@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import PATTERNS from "./question.jsx";
+import { useLocation, useNavigate } from "react-router-dom";useNavigate
+import { PATTERNS } from "./question.jsx";
 
 /**
  * Preflop Quiz – Pattern + RangeSpec answer
@@ -791,24 +792,35 @@ function buildRandomSet(patternId, count, prevFirstHand = null) {
 
 /* ================= メイン ================= */
 export default function PreflopQuiz() {
-  const [patternId, setPatternId] = useState(PATTERNS[0].id);
-  const [count, setCount] = useState(10);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const navPatternId = location.state?.patternId;
+  const navCount = location.state?.count;
+
+  const [patternId, setPatternId] = useState(() => navPatternId ?? PATTERNS[0].id);
+  const [count, setCount] = useState(() => (Number.isFinite(navCount) ? navCount : 10));
 
   const [questions, setQuestions] = useState([]);
   const [step, setStep] = useState(0);
-
   const [selected, setSelected] = useState(null);
   const [locked, setLocked] = useState(false);
 
-  // 初回セット生成（起動時に1回）
+  // Home からの遷移で state が来た時に反映（同一コンポーネント再利用時も安全）
+  useEffect(() => {
+    if (navPatternId) setPatternId(navPatternId);
+    if (Number.isFinite(navCount)) setCount(navCount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navPatternId, navCount]);
+
+  // patternId / count が変わったら問題セット作り直し
   useEffect(() => {
     const qs = buildRandomSet(patternId, count);
     setQuestions(qs);
     setStep(0);
     setSelected(null);
     setLocked(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [patternId, count]);
 
   function regenerate() {
     const prevFirstHand = questions?.[0]?.hero?.hand || null;
@@ -853,6 +865,14 @@ export default function PreflopQuiz() {
   return (
     <div style={styles.wrap}>
       <h1 style={styles.h1}>Preflop Quiz（PATTERNS × RangeSpec）</h1>
+
+      <button
+        style={styles.backBtn}
+        onClick={() => navigate("/")}
+      >
+        ← 問題選択に戻る
+      </button>
+
 
       {/* 設定 */}
       <div style={styles.toolbar}>

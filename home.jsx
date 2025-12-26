@@ -1,7 +1,12 @@
+import React from "react";
+import { PATTERNS } from "./question.jsx";
+import { useNavigate } from "react-router-dom";
+
 // App.jsx 内（どこでもOK）に追加
 function Home({ initialPatternId, initialCount, onStart }) {
   const [query, setQuery] = React.useState("");
   const [count, setCount] = React.useState(Number.isFinite(initialCount) ? initialCount : 10);
+  const navigate = useNavigate();
 
   // フィルタ（id に "ante"/"chase" が含まれるか）
   const [onlyAnte, setOnlyAnte] = React.useState(false);
@@ -13,7 +18,7 @@ function Home({ initialPatternId, initialCount, onStart }) {
       .filter((p) => {
         if (onlyAnte && !String(p.id).toLowerCase().includes("ante")) return false;
         if (onlyChase && !String(p.id).toLowerCase().includes("chase")) return false;
-        if (!q) return true;
+        if (!q) return true;contentReference
 
         const hay = `${p.id} ${p.label}`.toLowerCase();
         return hay.includes(q);
@@ -146,8 +151,12 @@ function Home({ initialPatternId, initialCount, onStart }) {
                 </div>
                 <button
                   style={ui.primaryBtn}
-                  onClick={() => onStart?.({ patternId: selected.id, count })}
+                  disabled={!selectedId}
+                  onClick={() => {
+                    navigate("/quiz", { state: { patternId: selectedId, count } });
+                  }}
                 >
+
                   このパターンで開始
                 </button>
               </div>
@@ -179,7 +188,7 @@ function Home({ initialPatternId, initialCount, onStart }) {
                   ※ PATTERNS の内容（id/label/questionBuilder 等）に基づいて出題が行われます。{" "}
                   {/* PATTERNS が id/label を持つ根拠 */}
                   <span style={{ opacity: 0.9 }}>
-                    （PATTERNS は id/label を保持 :contentReference[oaicite:1]{index=1}）
+                    {/* （PATTERNS は id/label を保持 :contentReference[oaicite:1]{index=1}） */}
                   </span>
                 </div>
               </div>
@@ -189,7 +198,7 @@ function Home({ initialPatternId, initialCount, onStart }) {
           )}
         </div>
       </div>
-    </div>
+    </div>// src/Home.jsx
   );
 }
 
